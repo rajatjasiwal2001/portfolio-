@@ -1,6 +1,503 @@
-// Portfolio Website JavaScript
+// Portfolio Website JavaScript with WebSocket Live Features
+
+// WebSocket Live Features Configuration
+const WS_CONFIG = {
+    // Use wss:// for production, ws:// for development
+    url: 'ws://localhost:8080',
+    reconnectInterval: 5000,
+    maxReconnectAttempts: 10
+};
+
+// Global WebSocket instance
+let websocket = null;
+let reconnectAttempts = 0;
+let isOnline = false;
+let visitorCount = 0;
+let lastActivity = Date.now();
+
+// Initialize WebSocket connection
+function initWebSocket() {
+    try {
+        websocket = new WebSocket(WS_CONFIG.url);
+        
+        websocket.onopen = function(event) {
+            console.log('🔗 WebSocket connected successfully!');
+            isOnline = true;
+            reconnectAttempts = 0;
+            updateConnectionStatus(true);
+            
+            // Send initial data
+            sendMessage({
+                type: 'visitor_join',
+                data: {
+                    page: window.location.pathname,
+                    timestamp: Date.now(),
+                    userAgent: navigator.userAgent,
+                    referrer: document.referrer
+                }
+            });
+            
+            // Start heartbeat
+            startHeartbeat();
+        };
+        
+        websocket.onmessage = function(event) {
+            try {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+            } catch (error) {
+                console.error('Error parsing WebSocket message:', error);
+            }
+        };
+        
+        websocket.onclose = function(event) {
+            console.log('🔌 WebSocket disconnected');
+            isOnline = false;
+            updateConnectionStatus(false);
+            stopHeartbeat();
+            
+            // Attempt to reconnect
+            if (reconnectAttempts < WS_CONFIG.maxReconnectAttempts) {
+                setTimeout(() => {
+                    reconnectAttempts++;
+                    console.log(`🔄 Attempting to reconnect... (${reconnectAttempts}/${WS_CONFIG.maxReconnectAttempts})`);
+                    initWebSocket();
+                }, WS_CONFIG.reconnectInterval);
+            }
+        };
+        
+        websocket.onerror = function(error) {
+            console.error('❌ WebSocket error:', error);
+            showNotification('Connection error. Some live features may not work.', 'warning');
+        };
+        
+    } catch (error) {
+        console.error('Failed to initialize WebSocket:', error);
+        showNotification('Live features unavailable. Using offline mode.', 'info');
+    }
+}
+
+// Handle incoming WebSocket messages
+function handleWebSocketMessage(message) {
+    switch (message.type) {
+        case 'visitor_count':
+            updateVisitorCount(message.data.count);
+            break;
+        case 'notification':
+            showNotification(message.data.text, message.data.type || 'info');
+            break;
+        case 'chat_message':
+            handleChatMessage(message.data);
+            break;
+        case 'user_typing':
+            handleUserTyping(message.data);
+            break;
+        case 'live_update':
+            handleLiveUpdate(message.data);
+            break;
+        case 'pong':
+            // Heartbeat response
+            break;
+        default:
+            console.log('Unknown message type:', message.type);
+    }
+}
+
+// Send message through WebSocket
+function sendMessage(message) {
+    if (websocket && websocket.readyState === WebSocket.OPEN) {
+        websocket.send(JSON.stringify(message));
+        lastActivity = Date.now();
+    }
+}
+
+// Update connection status indicator
+function updateConnectionStatus(connected) {
+    const statusElement = document.getElementById('connection-status');
+    if (statusElement) {
+        statusElement.className = connected ? 'online' : 'offline';
+        statusElement.innerHTML = connected ? 
+            '<i class="fas fa-circle text-success"></i> Live' : 
+            '<i class="fas fa-circle text-danger"></i> Offline';
+    }
+}
+
+// Update visitor count
+function updateVisitorCount(count) {
+    visitorCount = count;
+    const visitorElement = document.getElementById('visitor-count');
+    if (visitorElement) {
+        visitorElement.textContent = count;
+        visitorElement.classList.add('pulse');
+        setTimeout(() => visitorElement.classList.remove('pulse'), 1000);
+    }
+}
+
+// Heartbeat system
+let heartbeatInterval;
+function startHeartbeat() {
+    heartbeatInterval = setInterval(() => {
+        sendMessage({ type: 'ping' });
+    }, 30000); // Send ping every 30 seconds
+}
+
+function stopHeartbeat() {
+    if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+    }
+}
+
+// Track user activity
+function trackActivity() {
+    lastActivity = Date.now();
+    sendMessage({
+        type: 'activity',
+        data: {
+            page: window.location.pathname,
+            timestamp: Date.now(),
+            scrollY: window.scrollY,
+            viewport: {
+                width: window.innerWidth,
+                height: window.innerHeight
+            }
+        }
+    });
+}
+
+// Live chat functionality
+function initLiveChat() {
+    const chatWidget = document.getElementById('live-chat-widget');
+    if (!chatWidget) return;
+    
+    const chatToggle = chatWidget.querySelector('.chat-toggle');
+    const chatContainer = chatWidget.querySelector('.chat-container');
+    const chatMessages = chatWidget.querySelector('.chat-messages');
+    const chatInput = chatWidget.querySelector('.chat-input');
+    const sendButton = chatWidget.querySelector('.send-button');
+    
+    let isChatOpen = false;
+    let isTyping = false;
+    let typingTimeout;
+    
+    // Toggle chat
+    chatToggle.addEventListener('click', () => {
+        isChatOpen = !isChatOpen;
+        chatContainer.style.display = isChatOpen ? 'block' : 'none';
+        chatToggle.innerHTML = isChatOpen ? 
+            '<i class="fas fa-times"></i>' : 
+            '<i class="fas fa-comments"></i>';
+        
+        if (isChatOpen) {
+            chatInput.focus();
+            sendMessage({
+                type: 'chat_join',
+                data: { page: window.location.pathname }
+            });
+        }
+    });
+    
+    // Send message
+    function sendChatMessage() {
+        const message = chatInput.value.trim();
+        if (message && isOnline) {
+            const messageData = {
+                id: Date.now(),
+                message: message,
+                timestamp: Date.now(),
+                sender: 'visitor'
+            };
+            
+            addChatMessage(messageData);
+            sendMessage({
+                type: 'chat_message',
+                data: messageData
+            });
+            
+            chatInput.value = '';
+            stopTyping();
+        }
+    }
+    
+    // Handle send button and enter key
+    sendButton.addEventListener('click', sendChatMessage);
+    chatInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            sendChatMessage();
+        } else {
+            handleTyping();
+        }
+    });
+    
+    // Add message to chat
+    function addChatMessage(messageData) {
+        const messageElement = document.createElement('div');
+        messageElement.className = `chat-message ${messageData.sender}`;
+        messageElement.innerHTML = `
+            <div class="message-content">
+                <span class="message-text">${escapeHtml(messageData.message)}</span>
+                <span class="message-time">${formatTime(messageData.timestamp)}</span>
+            </div>
+        `;
+        
+        chatMessages.appendChild(messageElement);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+    
+    // Handle incoming chat messages
+    function handleChatMessage(data) {
+        if (isChatOpen) {
+            addChatMessage(data);
+        }
+        
+        // Show notification for new messages when chat is closed
+        if (!isChatOpen && data.sender === 'admin') {
+            showNotification(`New message: ${data.message.substring(0, 50)}...`, 'info');
+        }
+    }
+    
+    // Handle typing indicators
+    function handleTyping() {
+        if (!isTyping) {
+            isTyping = true;
+            sendMessage({
+                type: 'typing',
+                data: { typing: true }
+            });
+        }
+        
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+            stopTyping();
+        }, 2000);
+    }
+    
+    function stopTyping() {
+        if (isTyping) {
+            isTyping = false;
+            sendMessage({
+                type: 'typing',
+                data: { typing: false }
+            });
+        }
+    }
+    
+    function handleUserTyping(data) {
+        const typingIndicator = chatContainer.querySelector('.typing-indicator');
+        if (data.typing) {
+            if (!typingIndicator) {
+                const indicator = document.createElement('div');
+                indicator.className = 'typing-indicator';
+                indicator.innerHTML = '<i class="fas fa-circle"></i><i class="fas fa-circle"></i><i class="fas fa-circle"></i>';
+                chatMessages.appendChild(indicator);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+        } else if (typingIndicator) {
+            typingIndicator.remove();
+        }
+    }
+}
+
+// Live notification system
+function initLiveNotifications() {
+    // Listen for live updates
+    window.addEventListener('beforeunload', () => {
+        sendMessage({
+            type: 'visitor_leave',
+            data: {
+                page: window.location.pathname,
+                timestamp: Date.now()
+            }
+        });
+    });
+    
+    // Track page visibility
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            sendMessage({
+                type: 'page_hidden',
+                data: { timestamp: Date.now() }
+            });
+        } else {
+            sendMessage({
+                type: 'page_visible',
+                data: { timestamp: Date.now() }
+            });
+        }
+    });
+}
+
+// Utility functions
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function formatTime(timestamp) {
+    return new Date(timestamp).toLocaleTimeString([], { 
+        hour: '2-digit', 
+        minute: '2-digit' 
+    });
+}
+
+// Initialize live features panel
+function initLiveFeaturesPanel() {
+    const panel = document.getElementById('live-features-panel');
+    if (!panel) return;
+    
+    const toggle = panel.querySelector('.live-features-toggle');
+    const content = panel.querySelector('.live-features-content');
+    
+    let isOpen = false;
+    let sessionStart = Date.now();
+    let clickCount = 0;
+    let maxScroll = 0;
+    
+    // Toggle panel
+    toggle.addEventListener('click', () => {
+        isOpen = !isOpen;
+        content.style.display = isOpen ? 'block' : 'none';
+        toggle.style.transform = isOpen ? 'translateY(-50%) scale(1.1)' : 'translateY(-50%) scale(1)';
+    });
+    
+    // Update session time
+    function updateSessionTime() {
+        const elapsed = Date.now() - sessionStart;
+        const minutes = Math.floor(elapsed / 60000);
+        const seconds = Math.floor((elapsed % 60000) / 1000);
+        const sessionElement = document.getElementById('session-time');
+        if (sessionElement) {
+            sessionElement.textContent = `${minutes}m ${seconds}s`;
+        }
+    }
+    
+    // Track clicks
+    document.addEventListener('click', () => {
+        clickCount++;
+        const clickElement = document.getElementById('click-count');
+        if (clickElement) {
+            clickElement.textContent = clickCount;
+        }
+        sendMessage({
+            type: 'click_track',
+            data: { count: clickCount, timestamp: Date.now() }
+        });
+    });
+    
+    // Track scroll
+    window.addEventListener('scroll', () => {
+        const scrollPercent = Math.round((window.scrollY / (document.documentElement.scrollHeight - window.innerHeight)) * 100);
+        maxScroll = Math.max(maxScroll, scrollPercent);
+        const scrollElement = document.getElementById('scroll-percentage');
+        if (scrollElement) {
+            scrollElement.textContent = `${maxScroll}%`;
+        }
+    });
+    
+    // Update live visitor count
+    function updateLiveVisitorCount(count) {
+        const liveVisitorElement = document.getElementById('live-visitor-count');
+        if (liveVisitorElement) {
+            liveVisitorElement.textContent = count;
+        }
+    }
+    
+    // Update session time every second
+    setInterval(updateSessionTime, 1000);
+    
+    // Expose updateLiveVisitorCount for WebSocket messages
+    window.updateLiveVisitorCount = updateLiveVisitorCount;
+}
+
+// Enhanced live update handler
+function handleLiveUpdate(data) {
+    switch (data.updateType) {
+        case 'visitor_count':
+            updateVisitorCount(data.count);
+            if (window.updateLiveVisitorCount) {
+                window.updateLiveVisitorCount(data.count);
+            }
+            break;
+        case 'announcement':
+            showLiveNotification(data.message, 'info');
+            break;
+        case 'feature_highlight':
+            highlightFeature(data.feature);
+            break;
+        default:
+            console.log('Unknown live update:', data);
+    }
+}
+
+// Show live notification
+function showLiveNotification(message, type = 'info') {
+    const notification = document.createElement('div');
+    notification.className = `live-notification ${type}`;
+    notification.innerHTML = `
+        <h6><i class="fas fa-broadcast-tower"></i> Live Update</h6>
+        <p>${message}</p>
+    `;
+    
+    document.body.appendChild(notification);
+    
+    // Auto remove after 5 seconds
+    setTimeout(() => {
+        if (notification.parentNode) {
+            notification.style.animation = 'slideOutRight 0.3s ease';
+            setTimeout(() => {
+                if (notification.parentNode) {
+                    notification.parentNode.removeChild(notification);
+                }
+            }, 300);
+        }
+    }, 5000);
+}
+
+// Highlight feature
+function highlightFeature(featureId) {
+    const element = document.getElementById(featureId);
+    if (element) {
+        element.style.animation = 'pulse 1s ease-in-out 3';
+        element.style.boxShadow = '0 0 20px rgba(0, 123, 255, 0.5)';
+        
+        setTimeout(() => {
+            element.style.animation = '';
+            element.style.boxShadow = '';
+        }, 3000);
+    }
+}
+
+// Initialize all live features
+function initLiveFeatures() {
+    initWebSocket();
+    initLiveChat();
+    initLiveNotifications();
+    initLiveFeaturesPanel();
+    
+    // Track activity events
+    ['click', 'scroll', 'keypress', 'mousemove'].forEach(event => {
+        let timeout;
+        document.addEventListener(event, () => {
+            clearTimeout(timeout);
+            timeout = setTimeout(trackActivity, 1000);
+        });
+    });
+    
+    // Add slide out animation
+    const style = document.createElement('style');
+    style.textContent = `
+        @keyframes slideOutRight {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+    `;
+    document.head.appendChild(style);
+}
 
 document.addEventListener('DOMContentLoaded', function() {
+    // Initialize live features
+    initLiveFeatures();
     
     // Auto-change navigation links with smooth transitions
     const navLinks = document.querySelectorAll('.nav-link');
