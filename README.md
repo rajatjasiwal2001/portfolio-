@@ -27,7 +27,7 @@ This portfolio showcases my skills, projects, and hands-on experience.
 ### 2. Personal Portfolio Website
 - **Description:** My personal portfolio to showcase projects and skills.  
 - **Tech Stack:** HTML, CSS, Bootstrap  
-- **Live Demo:** [Click here](https://rajatjasiwal2001.github.io/portfolio/)  
+- **Live Demo:** https://rajatjasiwal2001.github.io/portfolio-/  
 - **GitHub Repo:** [Link](https://github.com/rajatjasiwal2001/portfolio-)
 
 ### 3. Passion Projects / Mini Projects
