@@ -1,29 +1,17 @@
 {
-  "name": "portfolio-websocket-server",
+  "name": "portfolio",
   "version": "1.0.0",
-  "description": "WebSocket server for portfolio live features",
-  "main": "websocket-server.js",
+  "description": "Personal portfolio website",
+  "main": "index.html",
   "scripts": {
-    "start": "node websocket-server.js",
-    "dev": "nodemon websocket-server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "http-server -p 8080",
+    "dev": "http-server -p 8080 -c-1"
   },
   "keywords": [
-    "websocket",
     "portfolio",
-    "live-chat",
-    "real-time",
-    "nodejs"
+    "personal",
+    "website"
   ],
   "author": "Rajat Jaiswal",
-  "license": "MIT",
-  "dependencies": {
-    "ws": "^8.14.2"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.2"
-  },
-  "engines": {
-    "node": ">=14.0.0"
-  }
+  "license": "MIT"
 }
